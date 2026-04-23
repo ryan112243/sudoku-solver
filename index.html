@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>數獨解題神器</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>數獨解題神器</h1>
+        <p>在下方輸入已知的數字，點擊「解題」來獲得解答。</p>
+        
+        <div id="sudoku-grid" class="grid">
+            <!-- JavaScript 會在這裡生成 81 個輸入框 -->
+        </div>
+
+        <div class="controls">
+            <button id="solve-btn" class="primary-btn">解題</button>
+            <button id="clear-btn" class="secondary-btn">清除</button>
+            <button id="demo-btn" class="demo-btn">測試範例</button>
+        </div>
+
+        <div id="message" class="message"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
