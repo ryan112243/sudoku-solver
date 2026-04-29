@@ -1,4 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // 檢查 OpenCV.js 是否載入完成
+    window.isOpenCvReady = false;
+    window.onOpenCvReady = function() {
+        window.isOpenCvReady = true;
+        console.log('OpenCV.js ready');
+    };
+
     const gridElement = document.getElementById('sudoku-grid');
     const solveBtn = document.getElementById('solve-btn');
     const clearBtn = document.getElementById('clear-btn');
@@ -217,8 +224,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const file = e.target.files[0];
         if (!file) return;
 
+        if (!window.isOpenCvReady) {
+            showMessage('圖像處理引擎仍在載入中，請稍候幾秒再試一次！', 'error');
+            uploadInput.value = '';
+            return;
+        }
+
         loadingElement.style.display = 'flex';
-        loadingText.textContent = '正在初始化圖像辨識模型...';
+        loadingText.textContent = '正在分析並擷取數獨網格...';
         showMessage('');
 
         try {
@@ -228,11 +241,88 @@ document.addEventListener('DOMContentLoaded', () => {
             await new Promise(r => img.onload = r);
 
             const canvas = document.createElement('canvas');
-            canvas.width = img.width;
-            canvas.height = img.height;
             const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0);
 
+            // --- OpenCV 處理 ---
+            let src = cv.imread(img);
+            let gray = new cv.Mat();
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+            let blurred = new cv.Mat();
+            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+            let thresh = new cv.Mat();
+            cv.adaptiveThreshold(blurred, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+            
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.Mat();
+            cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+            
+            let maxArea = 0;
+            let maxContourIndex = -1;
+            let bestApprox = new cv.Mat();
+            
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+                if (area > maxArea) {
+                    let peri = cv.arcLength(cnt, true);
+                    let approx = new cv.Mat();
+                    cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+                    if (approx.rows === 4) {
+                        maxArea = area;
+                        maxContourIndex = i;
+                        approx.copyTo(bestApprox);
+                    }
+                    approx.delete();
+                }
+            }
+            
+            if (maxContourIndex !== -1 && maxArea > 5000) { 
+                // 找到網格，進行透視變換
+                let pts = [];
+                for (let i = 0; i < 4; i++) {
+                    pts.push({x: bestApprox.data32S[i*2], y: bestApprox.data32S[i*2+1]});
+                }
+                
+                // 排序 4 個頂點: TL, TR, BR, BL
+                let rect = new Array(4);
+                let s = pts.map(p => p.x + p.y);
+                rect[0] = pts[s.indexOf(Math.min(...s))]; // TL
+                rect[2] = pts[s.indexOf(Math.max(...s))]; // BR
+                let diff = pts.map(p => p.y - p.x);
+                rect[1] = pts[diff.indexOf(Math.min(...diff))]; // TR
+                rect[3] = pts[diff.indexOf(Math.max(...diff))]; // BL
+                
+                let dSize = 900; // 統一轉換成 900x900 的正方形
+                let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                    rect[0].x, rect[0].y, 
+                    rect[1].x, rect[1].y, 
+                    rect[2].x, rect[2].y, 
+                    rect[3].x, rect[3].y
+                ]);
+                let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, dSize, 0, dSize, dSize, 0, dSize]);
+                
+                let M = cv.getPerspectiveTransform(srcTri, dstTri);
+                let warped = new cv.Mat();
+                let dsize = new cv.Size(dSize, dSize);
+                cv.warpPerspective(src, warped, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+                
+                // 準備裁切後的 canvas
+                canvas.width = dSize;
+                canvas.height = dSize;
+                cv.imshow(canvas, warped);
+                
+                M.delete(); warped.delete(); srcTri.delete(); dstTri.delete();
+            } else {
+                // 找不到明顯網格，直接使用原圖
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+            }
+            
+            src.delete(); gray.delete(); blurred.delete(); thresh.delete(); contours.delete(); hierarchy.delete(); bestApprox.delete();
+            // --- OpenCV 處理結束 ---
+
+            loadingText.textContent = '正在初始化圖像辨識模型...';
             const cellWidth = canvas.width / SIZE;
             const cellHeight = canvas.height / SIZE;
 
@@ -244,16 +334,16 @@ document.addEventListener('DOMContentLoaded', () => {
             let recognizedBoard = Array(SIZE).fill(0).map(() => Array(SIZE).fill(0));
             let completed = 0;
 
-            loadingText.textContent = '正在分析圖片 (0/81)...';
+            loadingText.textContent = '正在分析圖片數字 (0/81)...';
 
             for (let r = 0; r < SIZE; r++) {
                 for (let c = 0; c < SIZE; c++) {
-                    // 擷取每個宮格的中心 70% 區域，避開邊框
+                    // 擷取每個宮格的中心 60% 區域，避開可能的網格線
                     const rect = {
-                        left: Math.floor(c * cellWidth + cellWidth * 0.15),
-                        top: Math.floor(r * cellHeight + cellHeight * 0.15),
-                        width: Math.floor(cellWidth * 0.7),
-                        height: Math.floor(cellHeight * 0.7)
+                        left: Math.floor(c * cellWidth + cellWidth * 0.20),
+                        top: Math.floor(r * cellHeight + cellHeight * 0.20),
+                        width: Math.floor(cellWidth * 0.6),
+                        height: Math.floor(cellHeight * 0.6)
                     };
 
                     const cellData = ctx.getImageData(rect.left, rect.top, rect.width, rect.height);
@@ -266,7 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     
                     completed++;
-                    loadingText.textContent = `正在分析圖片 (${completed}/81)...`;
+                    loadingText.textContent = `正在分析圖片數字 (${completed}/81)...`;
                 }
             }
             await worker.terminate();
@@ -281,10 +371,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             }
-            showMessage('圖片辨識完成！請檢查是否有誤判（請確保上傳的圖片為裁切好的數獨網格）。', 'success');
+            showMessage('圖片辨識完成！請檢查是否有誤判。', 'success');
         } catch (err) {
             console.error(err);
-            showMessage('辨識失敗，請確認圖片是否為清晰的數獨網格。', 'error');
+            showMessage('辨識失敗，請確認圖片是否清晰。', 'error');
         } finally {
             loadingElement.style.display = 'none';
             uploadInput.value = '';
@@ -294,14 +384,14 @@ document.addEventListener('DOMContentLoaded', () => {
     function isCellEmpty(imageData) {
         const data = imageData.data;
         let darkPixels = 0;
-        // 計算深色像素的數量 (假設黑字白底)
+        // 計算深色像素的數量 (轉換為灰階)
         for (let i = 0; i < data.length; i += 4) {
             const r = data[i], g = data[i+1], b = data[i+2];
-            const avg = (r + g + b) / 3;
-            if (avg < 128) darkPixels++;
+            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (gray < 150) darkPixels++;
         }
-        // 如果深色像素少於 2%，視為空白格
-        return darkPixels < (data.length / 4) * 0.02;
+        // 如果深色像素少於 1.5%，視為空白格
+        return darkPixels < (data.length / 4) * 0.015;
     }
 
     // 初始化
