@@ -3,6 +3,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const solveBtn = document.getElementById('solve-btn');
     const clearBtn = document.getElementById('clear-btn');
     const demoBtn = document.getElementById('demo-btn');
+    const uploadBtn = document.getElementById('upload-btn');
+    const uploadInput = document.getElementById('upload-input');
+    const loadingElement = document.getElementById('loading');
+    const loadingText = document.getElementById('loading-text');
     const messageElement = document.getElementById('message');
     
     const SIZE = 9;
@@ -206,6 +210,99 @@ document.addEventListener('DOMContentLoaded', () => {
 
     clearBtn.addEventListener('click', clearGrid);
     demoBtn.addEventListener('click', loadDemo);
+
+    uploadBtn.addEventListener('click', () => uploadInput.click());
+
+    uploadInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        loadingElement.style.display = 'flex';
+        loadingText.textContent = '正在初始化圖像辨識模型...';
+        showMessage('');
+
+        try {
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            img.src = url;
+            await new Promise(r => img.onload = r);
+
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+
+            const cellWidth = canvas.width / SIZE;
+            const cellHeight = canvas.height / SIZE;
+
+            const worker = await Tesseract.createWorker('eng');
+            await worker.setParameters({
+                tessedit_char_whitelist: '123456789',
+            });
+
+            let recognizedBoard = Array(SIZE).fill(0).map(() => Array(SIZE).fill(0));
+            let completed = 0;
+
+            loadingText.textContent = '正在分析圖片 (0/81)...';
+
+            for (let r = 0; r < SIZE; r++) {
+                for (let c = 0; c < SIZE; c++) {
+                    // 擷取每個宮格的中心 70% 區域，避開邊框
+                    const rect = {
+                        left: Math.floor(c * cellWidth + cellWidth * 0.15),
+                        top: Math.floor(r * cellHeight + cellHeight * 0.15),
+                        width: Math.floor(cellWidth * 0.7),
+                        height: Math.floor(cellHeight * 0.7)
+                    };
+
+                    const cellData = ctx.getImageData(rect.left, rect.top, rect.width, rect.height);
+                    if (!isCellEmpty(cellData)) {
+                        const { data: { text } } = await worker.recognize(canvas, { rectangle: rect });
+                        const num = parseInt(text.trim(), 10);
+                        if (!isNaN(num) && num >= 1 && num <= 9) {
+                            recognizedBoard[r][c] = num;
+                        }
+                    }
+                    
+                    completed++;
+                    loadingText.textContent = `正在分析圖片 (${completed}/81)...`;
+                }
+            }
+            await worker.terminate();
+
+            clearGrid();
+            for (let r = 0; r < SIZE; r++) {
+                for (let c = 0; c < SIZE; c++) {
+                    if (recognizedBoard[r][c] !== 0) {
+                        const cell = cells[r * SIZE + c];
+                        cell.value = recognizedBoard[r][c];
+                        cell.classList.add('initial');
+                    }
+                }
+            }
+            showMessage('圖片辨識完成！請檢查是否有誤判（請確保上傳的圖片為裁切好的數獨網格）。', 'success');
+        } catch (err) {
+            console.error(err);
+            showMessage('辨識失敗，請確認圖片是否為清晰的數獨網格。', 'error');
+        } finally {
+            loadingElement.style.display = 'none';
+            uploadInput.value = '';
+        }
+    });
+
+    function isCellEmpty(imageData) {
+        const data = imageData.data;
+        let darkPixels = 0;
+        // 計算深色像素的數量 (假設黑字白底)
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i], g = data[i+1], b = data[i+2];
+            const avg = (r + g + b) / 3;
+            if (avg < 128) darkPixels++;
+        }
+        // 如果深色像素少於 2%，視為空白格
+        return darkPixels < (data.length / 4) * 0.02;
+    }
 
     // 初始化
     initGrid();

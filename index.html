@@ -19,11 +19,21 @@
             <button id="solve-btn" class="primary-btn">解題</button>
             <button id="clear-btn" class="secondary-btn">清除</button>
             <button id="demo-btn" class="demo-btn">測試範例</button>
+            <input type="file" id="upload-input" accept="image/*" style="display: none;">
+            <button id="upload-btn" class="upload-btn">上傳圖片</button>
         </div>
 
         <div id="message" class="message"></div>
     </div>
 
+    <!-- 載入中畫面 -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <p id="loading-text" style="margin-top: 15px; font-weight: bold; color: #333;">處理中...</p>
+    </div>
+
+    <!-- 引入 Tesseract.js 作為圖像辨識引擎 -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
