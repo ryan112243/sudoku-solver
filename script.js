@@ -43,6 +43,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 showMessage('');
             });
 
+            // 支援方向鍵切換格子
+            input.addEventListener('keydown', function(e) {
+                const idx = parseInt(this.dataset.index, 10);
+                const r = Math.floor(idx / SIZE);
+                const c = idx % SIZE;
+                let nextIdx = -1;
+
+                switch (e.key) {
+                    case 'ArrowUp':
+                        if (r > 0) nextIdx = idx - SIZE;
+                        e.preventDefault(); // 避免觸發數字增減
+                        break;
+                    case 'ArrowDown':
+                        if (r < SIZE - 1) nextIdx = idx + SIZE;
+                        e.preventDefault(); // 避免觸發數字增減
+                        break;
+                    case 'ArrowLeft':
+                        if (c > 0) nextIdx = idx - 1;
+                        e.preventDefault(); // 避免游標移動
+                        break;
+                    case 'ArrowRight':
+                        if (c < SIZE - 1) nextIdx = idx + 1;
+                        e.preventDefault(); // 避免游標移動
+                        break;
+                }
+
+                if (nextIdx !== -1) {
+                    cells[nextIdx].focus();
+                    // 為了視覺體驗更好，讓內容全選
+                    cells[nextIdx].select();
+                }
+            });
+
             gridElement.appendChild(input);
             cells.push(input);
         }
